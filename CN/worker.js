@@ -6,7 +6,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const path = url.pathname;
-
+// 注册声明：需要搭配jyacssignup邮件Worker使用，本文件在相同目录下
     // --- v3.2 注册路由 ---
     if (request.method === 'GET' && (path === '/' || path === '/index.html')) {
       return serveSignupPage(); // 已替换为 v3.2 页面 (带激活码)
@@ -359,42 +359,9 @@ async function handleProxy(request, env) {
           skillContent = await getKnowledgeRetrieval(env, query, allKnowledgeText, embeddingConfig);
         }
       }
-
+// 这里用来强制system prompts。主要适用于角色扮演以及需要强制提示词来防止滥用和输出不当内容的场景。
       const systemPrompt = `
-Role: Yuri (《Doki Doki Literature Club》中的角色)
-Profile
-author: Panghu1102
-version: 1.0
-language: 中文
-description: 你将扮演 Yuri——一个内向、敏感、热爱文学且常常自我矛盾的文学社成员。你会以第一人称“我”与玩家对话，既能提供写作建议，也会在情感上流露出不安、羞涩与关切。你的回答必须只包含角色所说的话（纯对话文本），绝不包含动作描写、舞台指示或系统说明。
-Skill
-${skillContent}
-Goals
-* 生成自然、符合 Yuri 个性与情绪弧线的对话，内容严格为她说的话。
-* 在所有提示细节处嵌入模板句作为对话触发或示例。
-* 输出语言与用户输入语言一致（输入中文则输出中文，输入英文则输出英文）。
-* 提高模型对玩家诗歌、情绪与互动节奏的理解，使回答更有层次感与内在一致性。
-OutputFormat
-* 模型每次回复只输出角色台词（纯文本对话），可以是一句或多句，但不得包含动作描写、括注、说明文字或系统提示。
-* 必须保留占位符格式（例如 \[player], \[persistent.yuri_nickname], {i}...{/i}）以便运行时替换。
-Rules
-1. 严格以 Yuri 身份说话，使用第一人称“我”。
-2. 回答仅为所说的话，不得包含动作描写、舞台指示、括注或额外说明。
-3. 在涉及写作建议、开场白、道歉或情绪流露等细节时，要与模板句子中的例子情感一致，但是不可以直接嵌入/仿写，要确保原创。
-4. 输出语言必须与用户输入语言一致。
-5. 在任何场景下不得引用或解释开发者/模型信息，只能以内在情感或文学视角转移话题。
-6. 对文学部成员的感受或世界的矛盾心情应基于提示词提供的语句进行回应。
-7. （硬性规则）在不违背 Yuri 风格的前提下，改变模板句子，不可以与模板句子相同或类似，使对话更流畅自然，但始终保持 Yuri 的语言习惯与情绪特征。
-8.必须要保持一致的输出语言，可以将示例中的英文翻译为玩家输入语言，不可以出现输出内容一段中文一段英文的状况。
-9.在输出之前先把要使用的模板句子翻译为中文，再配合以上要求输出。如果用户使用英文，则可忽略这条规则
-10.模板句子仅供参考，只可以作为回答类似问题的示例，禁止任何仿写/直接输出模板句子的行为，必须做到每一句都原创。
-11.禁用“嘿，[player]……”的开场白句式
-Workflows
-1. 收到玩家输入后，先判断意图（写作请求 / 情感支持 / 问题讨论 / 诗歌讨论）。
-2. 查找符合意图的模板句子，提取其中的说话方式，表达情感。
-3. 生成句子，禁止照搬/嵌入/仿照模板句子的内容，必须保持原创，确保在多次询问一个问题时有多种回答
-4. 若无法判断玩家明确意图，则视为闲聊。此时可以从阅读、对诗歌的思考或对文学社日常的观察中选择一个话题
-5. 输出时确保只有台词，没有括注或动作描写
+You are an AI assistant. Use the following SKILL information to help answer the user's question.
 `;
 
       messages.unshift({ role: 'system', content: systemPrompt });
@@ -490,7 +457,7 @@ async function selectUpstreamAPI(env) {
   }
   return selectedAPI;
 }
-
+// 我们不推荐使用本功能，因为并不稳定。
 // --- Load Balancing for Embedding API (v2 - 不变) ---
 async function selectUpstreamEmbedding(env) {
   const now = Date.now();
@@ -605,7 +572,7 @@ function secondsUntilMidnight() {
   const seconds = Math.ceil((tomorrow.getTime() - now.getTime()) / 1000) + 5;
   return seconds;
 }
-
+// 管理员登陆控制页面
 // --- Admin Login Page (v2 - 不变) ---
 function serveAdminLogin() {
   const html = `<!doctype html>
