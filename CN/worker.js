@@ -1,12 +1,12 @@
 // 一个基于CloudFlare Worker，可以实现AI网关，用户注册，用户管理，强制替换提示词及更改请求体，BM25等功能的js！仅需3分钟即可完成部署
 // Github仓库：https://github.com/Panghu1102/cfRelay   麻烦star啦！
 // 开发者：Panghu1102
-// 当前版本：1.0.0   内部版本：v3.2
+// 当前版本：1.0.0   内部版本：v3.2.1
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const path = url.pathname;
-// 注册声明：需要搭配jyacssignup邮件Worker使用，本文件在相同目录下
+    // 注册声明：需要搭配jyacssignup邮件Worker使用，本文件在相同目录下
     // --- v3.2 注册路由 ---
     if (request.method === 'GET' && (path === '/' || path === '/index.html')) {
       return serveSignupPage(); // 已替换为 v3.2 页面 (带激活码)
@@ -16,36 +16,36 @@ export default {
     }
     // (新) v3.2 轮询路由
     if (request.method === 'GET' && path === '/signup-status') {
-      return handleSignupStatus(request, env); 
+      return handleSignupStatus(request, env);
     }
     // --- 结束 ---
 
     if (path === '/admin' || path === '/admin/') {
-      return handleAdmin(request, env); 
+      return handleAdmin(request, env);
     }
 
     if (path === '/admin/login') {
-      return serveAdminLogin(); 
+      return serveAdminLogin();
     }
 
     if (path === '/admin/api/users') {
-      return handleAdminAPI(request, env); 
+      return handleAdminAPI(request, env);
     }
 
     if (path === '/admin/api/knowledge') {
-      return handleAdminKnowledgeAPI(request, env); 
+      return handleAdminKnowledgeAPI(request, env);
     }
 
     if (request.method === 'POST' && path === '/admin/api/action') {
-      return handleAdminAction(request, env); 
+      return handleAdminAction(request, env);
     }
 
     if (request.method === 'POST' && path === '/admin/api/add-knowledge') {
-      return handleAddKnowledge(request, env); 
+      return handleAddKnowledge(request, env);
     }
 
     if (request.method === 'POST' && path === '/admin/api/test-connection') {
-      return handleTestConnection(request, env); 
+      return handleTestConnection(request, env);
     }
 
     // 其他路径代理 (v2 不变)
@@ -186,7 +186,7 @@ async function handleSignup(request, env) {
     if (!body || !body.email || !body.password || !body.captcha || !body.activationCode) {
       return jsonResponse({ error: '缺少 邮箱、密码、验证码或激活码' }, 400);
     }
-    
+
     const email = String(body.email).trim().toLowerCase();
     const password = String(body.password);
     const captcha = String(body.captcha);
@@ -233,7 +233,7 @@ async function handleSignup(request, env) {
     const ipKey = `signup_ip:${ip}:${yyyyMm}`;
     const rawCount = await env.USER_KEYS_KV.get(ipKey);
     const count = rawCount ? parseInt(rawCount, 10) : 0;
-    const LIMIT_PER_IP_PER_MONTH = 5; 
+    const LIMIT_PER_IP_PER_MONTH = parseInt(env.LIMIT_PER_IP_PER_MONTH || '5', 10);
     if (count >= LIMIT_PER_IP_PER_MONTH) {
       return jsonResponse({ error: 'too many signups from this IP this month' }, 429);
     }
@@ -242,13 +242,13 @@ async function handleSignup(request, env) {
 
     // (v3.1) 哈希密码
     const passHash = await hashPassword(password);
-    
+
     // (v3.1) 存储待处理记录 (15 分钟 TTL)
     await env.USER_KEYS_KV.put(pendingKey, passHash, { expirationTtl: 900 });
 
     // (v3.1) 返回成功
     return jsonResponse({ ok: true, message: 'Pending activation. Please send verification email.' }, 200);
-    
+
   } catch (err) {
     return jsonResponse({ error: 'internal_error', detail: String(err) }, 500);
   }
@@ -259,15 +259,15 @@ async function handleSignup(request, env) {
 async function handleSignupStatus(request, env) {
   const url = new URL(request.url);
   const email = url.searchParams.get('email');
-  
+
   if (!email) {
     return jsonResponse({ error: 'missing email' }, 400);
   }
-  
+
   // 检查最终的用户 key 是否已由 jyacssignup worker 创建
   const userKey = `userkey:${email.toLowerCase()}`;
   const meta = await env.USER_KEYS_KV.get(userKey);
-  
+
   if (meta) {
     // 邮件 Worker 已成功处理
     return jsonResponse({ status: 'complete' });
@@ -302,8 +302,8 @@ async function handleProxy(request, env) {
 
   const auth = request.headers.get('Authorization') || '';
   if (!auth.startsWith('Bearer ')) return jsonResponse({ error: 'missing Authorization header' }, 401);
-  
-  const username = auth.slice(7).trim(); 
+
+  const username = auth.slice(7).trim();
   if (!username) return jsonResponse({ error: 'missing api key (email)' }, 401);
 
   const kvKey = `userkey:${username}`;
@@ -319,12 +319,12 @@ async function handleProxy(request, env) {
   if (meta.status === 'banned') {
     return jsonResponse({ error: 'account banned' }, 403);
   }
-  
+
   const yyyyMm = new Date().toISOString().slice(0, 7);
   const quotaKey = `quota:${username}:${yyyyMm}`;
   const rawUsed = await env.USER_KEYS_KV.get(quotaKey);
   const used = rawUsed ? parseInt(rawUsed, 10) : 0;
-  const QUOTA_PER_USER_PER_MONTH = 999;
+  const QUOTA_PER_USER_PER_MONTH = parseInt(env.QUOTA_PER_USER_PER_MONTH || '999', 10);
   if (used >= QUOTA_PER_USER_PER_MONTH) {
     return jsonResponse({ error: 'monthly quota exceeded for this username' }, 429);
   }
@@ -332,8 +332,11 @@ async function handleProxy(request, env) {
   const ttl = secondsUntilMonthEnd();
   await env.USER_KEYS_KV.put(quotaKey, String(used + 1), { expirationTtl: ttl });
 
-  const apiConfig = await selectUpstreamAPI(env);
+  // 检查负载均衡开关状态
+  const loadBalancingEnabled = await env.USER_KEYS_KV.get('config:load_balancing_enabled');
+  const isLoadBalancingOn = loadBalancingEnabled === 'true';
 
+  let apiConfig;
   let bodyToForward;
   const newHeaders = new Headers(request.headers);
 
@@ -342,10 +345,46 @@ async function handleProxy(request, env) {
       const clonedRequest = request.clone();
       const originalBody = await clonedRequest.json();
 
-      if (!originalBody.model || originalBody.model !== 'yuri-chat-01') {
-        return jsonResponse({ error: 'Invalid model ID. You must use "yuri-chat-01".' }, 400);
+      const MODEL_NAME_1 = env.REQUIRED_MODEL_NAME || 'example-model';
+      const MODEL_NAME_2 = env.REQUIRED_MODEL_NAME_2 || 'example-model2';
+
+      if (isLoadBalancingOn) {
+        // 负载均衡模式：自动选择 API，接受任一模型名称
+        apiConfig = await selectUpstreamAPI(env);
+        
+        if (!originalBody.model || (originalBody.model !== MODEL_NAME_1 && originalBody.model !== MODEL_NAME_2)) {
+          return jsonResponse({ error: `Invalid model ID. You must use "${MODEL_NAME_1}" or "${MODEL_NAME_2}".` }, 400);
+        }
+      } else {
+        // 手动模式：根据请求的模型名称选择对应的 API
+        if (!originalBody.model) {
+          return jsonResponse({ error: 'Missing model ID.' }, 400);
+        }
+
+        if (originalBody.model === MODEL_NAME_1) {
+          // 使用 API1
+          apiConfig = {
+            baseUrl: env.UPSTREAM_BASE_URL,
+            apiKey: env.REAL_API_KEY,
+            modelId: env.UPSTREAM_MODEL_ID,
+            name: 'API1'
+          };
+        } else if (originalBody.model === MODEL_NAME_2) {
+          // 使用 API2
+          if (!env.UPSTREAM_BASE_URL_2 || !env.REAL_API_KEY_2) {
+            return jsonResponse({ error: `Model "${MODEL_NAME_2}" is not available (API2 not configured).` }, 400);
+          }
+          apiConfig = {
+            baseUrl: env.UPSTREAM_BASE_URL_2,
+            apiKey: env.REAL_API_KEY_2,
+            modelId: env.UPSTREAM_MODEL_ID_2 || env.UPSTREAM_MODEL_ID,
+            name: 'API2'
+          };
+        } else {
+          return jsonResponse({ error: `Invalid model ID. You must use "${MODEL_NAME_1}" or "${MODEL_NAME_2}".` }, 400);
+        }
       }
-      
+
       let messages = originalBody.messages || [];
       messages = messages.filter(m => m.role !== 'system');
       const query = messages.filter(m => m.role === 'user').pop()?.content || '';
@@ -359,7 +398,7 @@ async function handleProxy(request, env) {
           skillContent = await getKnowledgeRetrieval(env, query, allKnowledgeText, embeddingConfig);
         }
       }
-// 这里用来强制system prompts。主要适用于角色扮演以及需要强制提示词来防止滥用和输出不当内容的场景。
+      // 这里用来强制system prompts。主要适用于角色扮演以及需要强制提示词来防止滥用和输出不当内容的场景。
       const systemPrompt = `
 You are an AI assistant. Use the following SKILL information to help answer the user's question.
 `;
@@ -409,7 +448,7 @@ You are an AI assistant. Use the following SKILL information to help answer the 
 // --- Load Balancing Logic (v2 - 不变) ---
 async function selectUpstreamAPI(env) {
   const now = Date.now();
-  const today = new Date().toISOString().slice(0, 10); 
+  const today = new Date().toISOString().slice(0, 10);
   const api1 = {
     baseUrl: env.UPSTREAM_BASE_URL,
     apiKey: env.REAL_API_KEY,
@@ -428,7 +467,7 @@ async function selectUpstreamAPI(env) {
   const dailyCountKey = `api1_daily_count:${today}`;
   const rawCount = await env.USER_KEYS_KV.get(dailyCountKey);
   const dailyCount = rawCount ? parseInt(rawCount, 10) : 0;
-  const DAILY_LIMIT = 2500;
+  const DAILY_LIMIT = parseInt(env.DAILY_LIMIT || '2500', 10);
   if (dailyCount >= DAILY_LIMIT) {
     return api2;
   }
@@ -444,7 +483,7 @@ async function selectUpstreamAPI(env) {
         shouldAlternate = true;
         selectedAPI = lastRequest.api === 'API1' ? api2 : api1;
       }
-    } catch (err) {}
+    } catch (err) { }
   }
   const newRequestInfo = {
     timestamp: now,
@@ -480,7 +519,7 @@ async function selectUpstreamEmbedding(env) {
   const dailyCountKey = `embedding1_daily_count:${today}`;
   const rawCount = await env.USER_KEYS_KV.get(dailyCountKey);
   const dailyCount = rawCount ? parseInt(rawCount, 10) : 0;
-  const DAILY_LIMIT = 2500; 
+  const DAILY_LIMIT = parseInt(env.DAILY_LIMIT || '2500', 10);
   if (dailyCount >= DAILY_LIMIT) {
     return embedding2;
   }
@@ -494,7 +533,7 @@ async function selectUpstreamEmbedding(env) {
       if (timeSince < 2000) {
         selected = lastRequest.api === 'EMBEDDING1' ? embedding2 : embedding1;
       }
-    } catch {}
+    } catch { }
   }
   const newInfo = { timestamp: now, api: selected.name };
   await env.USER_KEYS_KV.put(lastRequestKey, JSON.stringify(newInfo), { expirationTtl: 60 });
@@ -518,8 +557,8 @@ async function getKnowledgeRetrieval(env, query, knowledgeText, config) {
   const systemPrompt = (await env.USER_KEYS_KV.get(PROMPT_KEY)) || DEFAULT_PROMPT;
   const messages = [
     { role: 'system', content: systemPrompt },
-    { 
-      role: 'user', 
+    {
+      role: 'user',
       content: `CONTEXT:\n${knowledgeText}\n\nQUERY:\n${query}`
     }
   ];
@@ -544,7 +583,7 @@ async function getKnowledgeRetrieval(env, query, knowledgeText, config) {
     return data.choices[0].message.content || '';
   } catch (err) {
     console.error(err);
-    return ''; 
+    return '';
   }
 }
 
@@ -620,7 +659,7 @@ async function handleAdmin(request, env) {
       return new Response('Invalid login request', { status: 400, headers: { 'content-type': 'text/html; charset=utf-8' } });
     }
   } else if (request.method === 'GET') {
-     return new Response(null, { status: 302, headers: { 'Location': '/admin/login' } });
+    return new Response(null, { status: 302, headers: { 'Location': '/admin/login' } });
   } else {
     return new Response('Method not allowed', { status: 405 });
   }
@@ -742,6 +781,30 @@ async function handleAdmin(request, env) {
         </thead>
         <tbody id="userTable">
           <tr><td colspan="8" class="loading">加载中...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h1 style="margin-top:40px">高级功能</h1>
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>功能</th>
+            <th>状态</th>
+            <th>说明</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>负载均衡</strong></td>
+            <td><span id="loadBalancingStatus" class="badge">加载中...</span></td>
+            <td>开启后自动在 API1 和 API2 间切换；关闭后根据客户端请求的模型名称选择对应 API</td>
+            <td>
+              <button class="action-btn btn-unban" id="toggleLoadBalancing" onclick="toggleLoadBalancing()">切换</button>
+            </td>
+          </tr>
         </tbody>
       </table>
     </div>
@@ -1130,8 +1193,73 @@ async function handleAdmin(request, env) {
       }
     }
     
+    // Load balancing toggle functions
+    async function loadLoadBalancingStatus() {
+      try {
+        const res = await fetch('/admin/api/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username,
+            password,
+            action: 'getLoadBalancingStatus'
+          })
+        });
+        
+        if (res.ok) {
+          const data = await res.json();
+          const isEnabled = data.enabled;
+          const statusSpan = document.getElementById('loadBalancingStatus');
+          const toggleBtn = document.getElementById('toggleLoadBalancing');
+          
+          if (isEnabled) {
+            statusSpan.className = 'badge active';
+            statusSpan.textContent = '已开启';
+            toggleBtn.textContent = '关闭';
+            toggleBtn.className = 'action-btn btn-ban';
+          } else {
+            statusSpan.className = 'badge danger';
+            statusSpan.textContent = '已关闭';
+            toggleBtn.textContent = '开启';
+            toggleBtn.className = 'action-btn btn-unban';
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load load balancing status:', err);
+      }
+    }
+    
+    async function toggleLoadBalancing() {
+      if (!confirm('确定要切换负载均衡状态吗？')) {
+        return;
+      }
+      
+      try {
+        const res = await fetch('/admin/api/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username,
+            password,
+            action: 'toggleLoadBalancing'
+          })
+        });
+        
+        const result = await res.json();
+        if (res.ok) {
+          alert(result.message || '操作成功');
+          loadLoadBalancingStatus();
+        } else {
+          alert('操作失败: ' + (result.error || '未知错误'));
+        }
+      } catch (err) {
+        alert('操作失败: ' + err.message);
+      }
+    }
+    
     loadData();
     loadKnowledge();
+    loadLoadBalancingStatus();
   </script>
 </body>
 </html>`;
@@ -1153,7 +1281,7 @@ async function handleAdminAPI(request, env) {
 
   try {
     const yyyyMm = new Date().toISOString().slice(0, 7);
-    const QUOTA_PER_USER_PER_MONTH = 999;
+    const QUOTA_PER_USER_PER_MONTH = parseInt(env.QUOTA_PER_USER_PER_MONTH || '999', 10);
 
     const userList = await env.USER_KEYS_KV.list({ prefix: 'userkey:' });
 
@@ -1161,7 +1289,7 @@ async function handleAdminAPI(request, env) {
     let totalCalls = 0;
 
     for (const key of userList.keys) {
-      const emailAsUsername = key.name.replace('userkey:', ''); 
+      const emailAsUsername = key.name.replace('userkey:', '');
       const metaRaw = await env.USER_KEYS_KV.get(key.name);
 
       if (!metaRaw) continue;
@@ -1181,9 +1309,9 @@ async function handleAdminAPI(request, env) {
       totalCalls += used;
 
       const registrationIP = meta.registrationIP || '-';
-      
+
       users.push({
-        username: emailAsUsername, 
+        username: emailAsUsername,
         createdAt: meta.createdAt ? new Date(meta.createdAt).toLocaleString('zh-CN') : '-',
         registrationIP,
         activationCode: meta.activatedWith || 'legacy-user', // 填充 'email-verification' 或旧的激活码
@@ -1208,7 +1336,8 @@ async function handleAdminAPI(request, env) {
     const dailyCountKey = `api1_daily_count:${today}`;
     const rawDailyCount = await env.USER_KEYS_KV.get(dailyCountKey);
     const api1DailyCount = rawDailyCount ? parseInt(rawDailyCount, 10) : 0;
-    const api1Remaining = Math.max(0, 2500 - api1DailyCount);
+    const DAILY_LIMIT = parseInt(env.DAILY_LIMIT || '2500', 10);
+    const api1Remaining = Math.max(0, DAILY_LIMIT - api1DailyCount);
 
     return jsonResponse({
       totalUsers,
@@ -1280,11 +1409,11 @@ async function handleAddKnowledge(request, env) {
     }
 
     const id = Date.now().toString();
-    
+
     const stmt = env.KNOWLEDGE_D1.prepare(
       'INSERT INTO knowledge (id, name, text) VALUES (?, ?, ?)'
-    ).bind(id, name, text); 
-    
+    ).bind(id, name, text);
+
     await stmt.run();
 
     return jsonResponse({ message: `知识已添加，ID: ${id}` });
@@ -1301,7 +1430,7 @@ async function handleAdminAction(request, env) {
       return jsonResponse({ error: 'invalid request body' }, 400);
     }
 
-    const { username, password, action, target, amount, prompt } = body; 
+    const { username, password, action, target, amount, prompt } = body;
 
     const adminUsername = env.ADMIN_USERNAME || 'Panghu1102';
     if (!env.ADMIN_PASSWORD || username !== adminUsername || password !== env.ADMIN_PASSWORD) {
@@ -1363,10 +1492,23 @@ async function handleAdminAction(request, env) {
 
       case 'updateRetrievalPrompt':
         if (typeof prompt !== 'string' || !prompt.trim()) {
-           return jsonResponse({ error: 'prompt is missing or empty' }, 400);
+          return jsonResponse({ error: 'prompt is missing or empty' }, 400);
         }
         await env.USER_KEYS_KV.put('config:retrieval_prompt', prompt.trim());
         return jsonResponse({ message: '检索提示词已更新' });
+
+      case 'getLoadBalancingStatus':
+        const loadBalancingEnabled = await env.USER_KEYS_KV.get('config:load_balancing_enabled');
+        return jsonResponse({ enabled: loadBalancingEnabled === 'true' });
+
+      case 'toggleLoadBalancing':
+        const currentStatus = await env.USER_KEYS_KV.get('config:load_balancing_enabled');
+        const newStatus = currentStatus === 'true' ? 'false' : 'true';
+        await env.USER_KEYS_KV.put('config:load_balancing_enabled', newStatus);
+        return jsonResponse({ 
+          message: newStatus === 'true' ? '负载均衡已开启' : '负载均衡已关闭',
+          enabled: newStatus === 'true'
+        });
 
       default:
         return jsonResponse({ error: 'unknown action' }, 400);
@@ -1476,7 +1618,7 @@ async function handleTestConnection(request, env) {
         };
       }
     } else {
-      results.api2 = null; 
+      results.api2 = null;
     }
 
     if (env.UPSTREAM_EMBEDDING_BASE_URL && env.REAL_EMBEDDING_API_KEY && env.EMBEDDING_MODEL_ID) {

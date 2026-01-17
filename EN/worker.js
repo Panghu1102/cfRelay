@@ -1,62 +1,60 @@
-// A Cloudflare Worker-based JS that implements an AI gateway, user signup, user management,
-// forced prompt replacement and request body modification, BM25 and other features.
-// Deployable in about 3 minutes.
-// GitHub: https://github.com/Panghu1102/cfRelay   Please give a star!
-// Author: Panghu1102
-// Version: 1.0.0   Internal: v3.2
+// 一个基于CloudFlare Worker，可以实现AI网关，用户注册，用户管理，强制替换提示词及更改请求体，BM25等功能的js！仅需3分钟即可完成部署
+// Github仓库：https://github.com/Panghu1102/cfRelay   麻烦star啦！
+// 开发者：Panghu1102
+// 当前版本：1.0.0   内部版本：v3.2.1
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const path = url.pathname;
-// Signup note: this needs to be used with the jyacssignup mail Worker in the same directory
-    // --- v3.2 Signup routes ---
+    // 注册声明：需要搭配jyacssignup邮件Worker使用，本文件在相同目录下
+    // --- v3.2 注册路由 ---
     if (request.method === 'GET' && (path === '/' || path === '/index.html')) {
-      return serveSignupPage(); // Replaced with v3.2 page (includes activation code)
+      return serveSignupPage(); // 已替换为 v3.2 页面 (带激活码)
     }
     if (request.method === 'POST' && path === '/signup') {
-      return handleSignup(request, env); // Replaced with v3.2 logic (includes activation code check)
+      return handleSignup(request, env); // 已替换为 v3.2 逻辑 (带激活码检查)
     }
-    // (new) v3.2 polling route
+    // (新) v3.2 轮询路由
     if (request.method === 'GET' && path === '/signup-status') {
-      return handleSignupStatus(request, env); 
+      return handleSignupStatus(request, env);
     }
-    // --- end ---
+    // --- 结束 ---
 
     if (path === '/admin' || path === '/admin/') {
-      return handleAdmin(request, env); 
+      return handleAdmin(request, env);
     }
 
     if (path === '/admin/login') {
-      return serveAdminLogin(); 
+      return serveAdminLogin();
     }
 
     if (path === '/admin/api/users') {
-      return handleAdminAPI(request, env); 
+      return handleAdminAPI(request, env);
     }
 
     if (path === '/admin/api/knowledge') {
-      return handleAdminKnowledgeAPI(request, env); 
+      return handleAdminKnowledgeAPI(request, env);
     }
 
     if (request.method === 'POST' && path === '/admin/api/action') {
-      return handleAdminAction(request, env); 
+      return handleAdminAction(request, env);
     }
 
     if (request.method === 'POST' && path === '/admin/api/add-knowledge') {
-      return handleAddKnowledge(request, env); 
+      return handleAddKnowledge(request, env);
     }
 
     if (request.method === 'POST' && path === '/admin/api/test-connection') {
-      return handleTestConnection(request, env); 
+      return handleTestConnection(request, env);
     }
 
-    // Proxy other paths (v2 unchanged)
+    // 其他路径代理 (v2 不变)
     return handleProxy(request, env);
   }
 };
 
 // --- MODIFIED: HTML Signup Page (v3.2) ---
-// Form updated to email, password, captcha, and activation
+// 表单更新为 email, password, captcha, 和 activation
 function serveSignupPage() {
   const html = `<!doctype html>
   <html>
@@ -71,19 +69,19 @@ function serveSignupPage() {
   </head>
   <body>
     <div class="box">
-      <h3>Sign Up</h3>
+      <h3>注册</h3>
       <form id="signupForm">
-        <input id="email" name="email" type="email" placeholder="Email (will be used as your API Key)" required />
-        <input id="password" name="password" type="password" placeholder="Set a password (min 8 chars)" required minlength="8" />
-        <input id="captcha" name="captcha" placeholder="Captcha (enter any 4 characters)" required minlength="4" />
-        <input id="activation" name="activation" placeholder="Activation code" required />
-        <button type="submit">Next</button>
+        <input id="email" name="email" type="email" placeholder="邮箱账号 (将作为你的API Key)" required />
+        <input id="password" name="password" type="password" placeholder="设置密码 (最少8位)" required minlength="8" />
+        <input id="captcha" name="captcha" placeholder="验证码 (输入任意4位字符)" required minlength="4" />
+        <input id="activation" name="activation" placeholder="激活码" required />
+        <button type="submit">下一步</button>
       </form>
       <div class="note" id="noteArea">
-        Signup steps:<br/>
-        1. Fill in all information (including activation code).<br/>
-        2. Click "Next".<br/>
-        3. Log in to your email and <b>send an email</b>.
+        注册流程：<br/>
+        1. 填写所有信息 (包括激活码)。<br/>
+        2. 点击“下一步”。<br/>
+        3. 登录您的邮箱，<b>发送一封邮件</b>。
       </div>
       <div id="msg" style="margin-top:10px;color:green;font-weight:bold;"></div>
     </div>
@@ -92,86 +90,86 @@ function serveSignupPage() {
     const msg = document.getElementById('msg');
     const note = document.getElementById('noteArea');
 
-    // (new) v3.2 polling function
+    // (新) v3.2 轮询函数
     function startPolling(email) {
       const startTime = Date.now();
       msg.style.color = '#1d4ed8';
       
       const intervalId = setInterval(async () => {
-        // stop polling after 15 minutes
+        // 15 分钟后停止轮询
         if (Date.now() - startTime > 900000) { // 15 * 60 * 1000
           clearInterval(intervalId);
           msg.style.color = 'red';
-          msg.textContent = 'Activation timed out (15 minutes). Please refresh and try again.';
+          msg.textContent = '激活超时 (15分钟)。请刷新页面重试。';
           return;
         }
         
         try {
-          // request new endpoint /signup-status
+          // 向新端点 /signup-status 发送请求
           const res = await fetch('/signup-status?email=' + encodeURIComponent(email));
           const data = await res.json();
           
           if (data.status === 'complete') {
-            // --- signup complete ---
+            // --- 注册成功 ---
             clearInterval(intervalId);
-            // show final "signup complete" page
+            // 显示最终的 "注册完成" 页面
             document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh">' +
               '<div style="text-align:center">' +
-              '<h2>Signup Complete 🎉</h2>' +
-              '<p>Your account <b>' + email + '</b> has been successfully activated.</p>' +
-              '<p>You can now close this page and use your email as the API Key.</p></div></div>';
+              '<h2>注册完成 🎉</h2>' +
+              '<p>您的账户 <b>' + email + '</b> 已成功激活。</p>' +
+              '<p>现在可以关闭此页, 使用您的邮箱作为 API Key。</p></div></div>';
           } else {
-            // still waiting... (optional: update message)
-            msg.textContent = 'Request submitted... waiting for email verification...';
+            // 仍在等待... (可选: 更新消息)
+            msg.textContent = '请求已提交... 正在等待邮件验证...';
           }
         } catch (err) {
-          // ignore fetch errors (e.g. network blips), polling will retry
+          // 忽略 fetch 错误 (例如网络波动)，轮询将自动重试
           console.error('Polling error:', err);
         }
-      }, 5000); // poll every 5 seconds
+      }, 5000); // 每 5 秒轮询一次
     }
 
-    // v3.2 submit handler
+    // v3.2 提交事件处理器
     f.addEventListener('submit', async (e)=> {
       e.preventDefault();
-      msg.style.color='green'; msg.textContent='Submitting request...';
+      msg.style.color='green'; msg.textContent='正在提交请求...';
       
       const email = document.getElementById('email').value.trim();
       const password = document.getElementById('password').value.trim();
       const captcha = document.getElementById('captcha').value.trim();
-      const activation = document.getElementById('activation').value.trim(); // (new) get activation code
+      const activation = document.getElementById('activation').value.trim(); // (新) 获取激活码
       
       try {
         const res = await fetch('/signup', {
           method: 'POST',
           headers: {'Content-Type':'application/json'},
-          // (new) send activationCode to backend
+          // (新) 将 activationCode 发送到后端
           body: JSON.stringify({ email, password, captcha, activationCode: activation }) 
         });
         
         const j = await res.json();
         
         if (res.ok) {
-          // signup request accepted, hide form and show next steps
+          // 注册请求成功，隐藏表单并显示下一步指示
           f.style.display = 'none'; 
-          msg.innerHTML = '✅ Request submitted! Please activate now:';
-          note.innerHTML = 'Please log in to your email <b>' + email + '</b><br/><br/>' +
-            'and send a new email to:<br/>' +
-            '<b>To:</b> <code>signup@jyacs.dpdns.org</code><br/>' +
-            '<b>Subject:</b> <code>Verification</code><br/><br/>' +
-            'After sending the email your account will be activated within a minute. This request is valid for 15 minutes.';
+          msg.innerHTML = '✅ 请求已提交！请立即激活：';
+          note.innerHTML = '请登录您的邮箱 <b>' + email + '</b><br/><br/>' +
+            '并发送一封新邮件：<br/>' +
+            '<b>收件人:</b> <code>signup@jyacs.dpdns.org</code><br/>' +
+            '<b>主题:</b> <code>验证</code><br/><br/>' +
+            '发送邮件后，您的账户将在一分钟内激活。此请求 15 分钟内有效。';
           
-          // --- (new) v3.2 start polling ---
+          // --- (新) v3.2 开始轮询 ---
           startPolling(email);
 
         } else {
-          // failure (e.g., invalid activation code, email exists)
+          // 失败 (例如: 激活码错误, 邮箱已存在)
           msg.style.color='red';
-          msg.textContent = j.error || 'Signup failed';
+          msg.textContent = j.error || '注册失败';
         }
       } catch (err) {
         msg.style.color='red';
-        msg.textContent='Network error';
+        msg.textContent='网络错误';
       }
     });
   </script>
@@ -180,101 +178,101 @@ function serveSignupPage() {
 }
 
 // --- MODIFIED: Handle Signup (v3.2) ---
-// (added activation code validation)
+// (增加了激活码验证)
 async function handleSignup(request, env) {
   try {
     const body = await request.json().catch(() => null);
-    // (new) check activationCode
+    // (新) 检查 activationCode
     if (!body || !body.email || !body.password || !body.captcha || !body.activationCode) {
-      return jsonResponse({ error: 'missing email, password, captcha, or activation code' }, 400);
+      return jsonResponse({ error: '缺少 邮箱、密码、验证码或激活码' }, 400);
     }
-    
+
     const email = String(body.email).trim().toLowerCase();
     const password = String(body.password);
     const captcha = String(body.captcha);
-    const activationCode = String(body.activationCode).trim(); // (new)
+    const activationCode = String(body.activationCode).trim(); // (新)
 
-    // --- (new) v3.2 activation code validation ---
-    // (This logic comes from your v2 implementation)
+    // --- (新) v3.2 激活码验证 ---
+    // (此逻辑来自您的 v2 版本)
     const activationKey = `activation:${activationCode}`;
     const activationRaw = await env.USER_KEYS_KV.get(activationKey);
     if (!activationRaw) {
-      return jsonResponse({ error: 'invalid activation code' }, 403);
+      return jsonResponse({ error: '无效的激活码' }, 403);
     }
-    // (activation code valid)
-    // --- end ---
+    // (激活码验证通过)
+    // --- 结束 ---
 
-    // (v3.1) validate email and password
+    // (v3.1) 验证邮箱和密码
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return jsonResponse({ error: 'Invalid email format' }, 400);
+      return jsonResponse({ error: '无效的邮箱格式' }, 400);
     }
     if (password.length < 8) {
-      return jsonResponse({ error: 'Password must be at least 8 characters' }, 400);
+      return jsonResponse({ error: '密码必须至少8位' }, 400);
     }
     if (captcha.length < 4) {
-      return jsonResponse({ error: 'Invalid captcha' }, 400);
+      return jsonResponse({ error: '无效的验证码' }, 400);
     }
 
-    // (v3.1) check if user exists
+    // (v3.1) 检查用户是否存在
     const userKey = `userkey:${email}`;
     const exists = await env.USER_KEYS_KV.get(userKey);
     if (exists) {
-      return jsonResponse({ error: 'This email is already registered' }, 409);
+      return jsonResponse({ error: '此邮箱已被注册' }, 409);
     }
 
-    // (v3.1) check pending
+    // (v3.1) 检查待处理
     const pendingKey = `pending:${email}`;
     const pendingExists = await env.USER_KEYS_KV.get(pendingKey);
     if (pendingExists) {
-      return jsonResponse({ error: 'There is a pending activation request for this email; check your mail or try again after 15 minutes' }, 409);
+      return jsonResponse({ error: '此邮箱已有待处理的激活请求，请检查您的邮件或 15 分钟后再试' }, 409);
     }
 
-    // (v3.1) IP limit
+    // (v3.1) IP 限制
     const ip = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || '0.0.0.0';
     const yyyyMm = new Date().toISOString().slice(0, 7);
     const ipKey = `signup_ip:${ip}:${yyyyMm}`;
     const rawCount = await env.USER_KEYS_KV.get(ipKey);
     const count = rawCount ? parseInt(rawCount, 10) : 0;
-    const LIMIT_PER_IP_PER_MONTH = 5; 
+    const LIMIT_PER_IP_PER_MONTH = parseInt(env.LIMIT_PER_IP_PER_MONTH || '5', 10);
     if (count >= LIMIT_PER_IP_PER_MONTH) {
       return jsonResponse({ error: 'too many signups from this IP this month' }, 429);
     }
     const ttl = secondsUntilMonthEnd();
     await env.USER_KEYS_KV.put(ipKey, String(count + 1), { expirationTtl: ttl });
 
-    // (v3.1) hash password
+    // (v3.1) 哈希密码
     const passHash = await hashPassword(password);
-    
-    // (v3.1) store pending record (15 minute TTL)
+
+    // (v3.1) 存储待处理记录 (15 分钟 TTL)
     await env.USER_KEYS_KV.put(pendingKey, passHash, { expirationTtl: 900 });
 
-    // (v3.1) return success
+    // (v3.1) 返回成功
     return jsonResponse({ ok: true, message: 'Pending activation. Please send verification email.' }, 200);
-    
+
   } catch (err) {
     return jsonResponse({ error: 'internal_error', detail: String(err) }, 500);
   }
 }
 
 // --- NEW: Signup Status Checker (v3.2) ---
-// (used by frontend polling)
+// (用于前端轮询)
 async function handleSignupStatus(request, env) {
   const url = new URL(request.url);
   const email = url.searchParams.get('email');
-  
+
   if (!email) {
     return jsonResponse({ error: 'missing email' }, 400);
   }
-  
-  // check whether the final user key has been created by the jyacssignup worker
+
+  // 检查最终的用户 key 是否已由 jyacssignup worker 创建
   const userKey = `userkey:${email.toLowerCase()}`;
   const meta = await env.USER_KEYS_KV.get(userKey);
-  
+
   if (meta) {
-    // mail worker has processed it successfully
+    // 邮件 Worker 已成功处理
     return jsonResponse({ status: 'complete' });
   } else {
-    // still waiting for email
+    // 仍在等待邮件
     return jsonResponse({ status: 'pending' });
   }
 }
@@ -290,7 +288,7 @@ async function hashPassword(password) {
   return hashHex;
 }
 
-// --- Proxy Request (v2 - unchanged) ---
+// --- Proxy Request (v2 - 不变) ---
 async function handleProxy(request, env) {
   if (request.method === 'OPTIONS') {
     return new Response(null, {
@@ -304,8 +302,8 @@ async function handleProxy(request, env) {
 
   const auth = request.headers.get('Authorization') || '';
   if (!auth.startsWith('Bearer ')) return jsonResponse({ error: 'missing Authorization header' }, 401);
-  
-  const username = auth.slice(7).trim(); 
+
+  const username = auth.slice(7).trim();
   if (!username) return jsonResponse({ error: 'missing api key (email)' }, 401);
 
   const kvKey = `userkey:${username}`;
@@ -321,12 +319,12 @@ async function handleProxy(request, env) {
   if (meta.status === 'banned') {
     return jsonResponse({ error: 'account banned' }, 403);
   }
-  
+
   const yyyyMm = new Date().toISOString().slice(0, 7);
   const quotaKey = `quota:${username}:${yyyyMm}`;
   const rawUsed = await env.USER_KEYS_KV.get(quotaKey);
   const used = rawUsed ? parseInt(rawUsed, 10) : 0;
-  const QUOTA_PER_USER_PER_MONTH = 999;
+  const QUOTA_PER_USER_PER_MONTH = parseInt(env.QUOTA_PER_USER_PER_MONTH || '999', 10);
   if (used >= QUOTA_PER_USER_PER_MONTH) {
     return jsonResponse({ error: 'monthly quota exceeded for this username' }, 429);
   }
@@ -334,8 +332,11 @@ async function handleProxy(request, env) {
   const ttl = secondsUntilMonthEnd();
   await env.USER_KEYS_KV.put(quotaKey, String(used + 1), { expirationTtl: ttl });
 
-  const apiConfig = await selectUpstreamAPI(env);
+  // 检查负载均衡开关状态
+  const loadBalancingEnabled = await env.USER_KEYS_KV.get('config:load_balancing_enabled');
+  const isLoadBalancingOn = loadBalancingEnabled === 'true';
 
+  let apiConfig;
   let bodyToForward;
   const newHeaders = new Headers(request.headers);
 
@@ -344,10 +345,46 @@ async function handleProxy(request, env) {
       const clonedRequest = request.clone();
       const originalBody = await clonedRequest.json();
 
-      if (!originalBody.model || originalBody.model !== 'yuri-chat-01') {
-        return jsonResponse({ error: 'Invalid model ID. You must use "yuri-chat-01".' }, 400);
+      const MODEL_NAME_1 = env.REQUIRED_MODEL_NAME || 'example-model';
+      const MODEL_NAME_2 = env.REQUIRED_MODEL_NAME_2 || 'example-model2';
+
+      if (isLoadBalancingOn) {
+        // 负载均衡模式：自动选择 API，接受任一模型名称
+        apiConfig = await selectUpstreamAPI(env);
+        
+        if (!originalBody.model || (originalBody.model !== MODEL_NAME_1 && originalBody.model !== MODEL_NAME_2)) {
+          return jsonResponse({ error: `Invalid model ID. You must use "${MODEL_NAME_1}" or "${MODEL_NAME_2}".` }, 400);
+        }
+      } else {
+        // 手动模式：根据请求的模型名称选择对应的 API
+        if (!originalBody.model) {
+          return jsonResponse({ error: 'Missing model ID.' }, 400);
+        }
+
+        if (originalBody.model === MODEL_NAME_1) {
+          // 使用 API1
+          apiConfig = {
+            baseUrl: env.UPSTREAM_BASE_URL,
+            apiKey: env.REAL_API_KEY,
+            modelId: env.UPSTREAM_MODEL_ID,
+            name: 'API1'
+          };
+        } else if (originalBody.model === MODEL_NAME_2) {
+          // 使用 API2
+          if (!env.UPSTREAM_BASE_URL_2 || !env.REAL_API_KEY_2) {
+            return jsonResponse({ error: `Model "${MODEL_NAME_2}" is not available (API2 not configured).` }, 400);
+          }
+          apiConfig = {
+            baseUrl: env.UPSTREAM_BASE_URL_2,
+            apiKey: env.REAL_API_KEY_2,
+            modelId: env.UPSTREAM_MODEL_ID_2 || env.UPSTREAM_MODEL_ID,
+            name: 'API2'
+          };
+        } else {
+          return jsonResponse({ error: `Invalid model ID. You must use "${MODEL_NAME_1}" or "${MODEL_NAME_2}".` }, 400);
+        }
       }
-      
+
       let messages = originalBody.messages || [];
       messages = messages.filter(m => m.role !== 'system');
       const query = messages.filter(m => m.role === 'user').pop()?.content || '';
@@ -361,7 +398,7 @@ async function handleProxy(request, env) {
           skillContent = await getKnowledgeRetrieval(env, query, allKnowledgeText, embeddingConfig);
         }
       }
-// This enforces system prompts. It's mainly used for role-play and to provide mandatory prompts to prevent abuse or inappropriate output.
+      // 这里用来强制system prompts。主要适用于角色扮演以及需要强制提示词来防止滥用和输出不当内容的场景。
       const systemPrompt = `
 You are an AI assistant. Use the following SKILL information to help answer the user's question.
 `;
@@ -408,10 +445,10 @@ You are an AI assistant. Use the following SKILL information to help answer the 
   }
 }
 
-// --- Load Balancing Logic (v2 - unchanged) ---
+// --- Load Balancing Logic (v2 - 不变) ---
 async function selectUpstreamAPI(env) {
   const now = Date.now();
-  const today = new Date().toISOString().slice(0, 10); 
+  const today = new Date().toISOString().slice(0, 10);
   const api1 = {
     baseUrl: env.UPSTREAM_BASE_URL,
     apiKey: env.REAL_API_KEY,
@@ -430,7 +467,7 @@ async function selectUpstreamAPI(env) {
   const dailyCountKey = `api1_daily_count:${today}`;
   const rawCount = await env.USER_KEYS_KV.get(dailyCountKey);
   const dailyCount = rawCount ? parseInt(rawCount, 10) : 0;
-  const DAILY_LIMIT = 2500;
+  const DAILY_LIMIT = parseInt(env.DAILY_LIMIT || '2500', 10);
   if (dailyCount >= DAILY_LIMIT) {
     return api2;
   }
@@ -446,7 +483,7 @@ async function selectUpstreamAPI(env) {
         shouldAlternate = true;
         selectedAPI = lastRequest.api === 'API1' ? api2 : api1;
       }
-    } catch (err) {}
+    } catch (err) { }
   }
   const newRequestInfo = {
     timestamp: now,
@@ -459,8 +496,8 @@ async function selectUpstreamAPI(env) {
   }
   return selectedAPI;
 }
-// We do not recommend using this feature because it is unstable.
-// --- Load Balancing for Embedding API (v2 - unchanged) ---
+// 我们不推荐使用本功能，因为并不稳定。
+// --- Load Balancing for Embedding API (v2 - 不变) ---
 async function selectUpstreamEmbedding(env) {
   const now = Date.now();
   const today = new Date().toISOString().slice(0, 10);
@@ -482,7 +519,7 @@ async function selectUpstreamEmbedding(env) {
   const dailyCountKey = `embedding1_daily_count:${today}`;
   const rawCount = await env.USER_KEYS_KV.get(dailyCountKey);
   const dailyCount = rawCount ? parseInt(rawCount, 10) : 0;
-  const DAILY_LIMIT = 2500; 
+  const DAILY_LIMIT = parseInt(env.DAILY_LIMIT || '2500', 10);
   if (dailyCount >= DAILY_LIMIT) {
     return embedding2;
   }
@@ -496,7 +533,7 @@ async function selectUpstreamEmbedding(env) {
       if (timeSince < 2000) {
         selected = lastRequest.api === 'EMBEDDING1' ? embedding2 : embedding1;
       }
-    } catch {}
+    } catch { }
   }
   const newInfo = { timestamp: now, api: selected.name };
   await env.USER_KEYS_KV.put(lastRequestKey, JSON.stringify(newInfo), { expirationTtl: 60 });
@@ -507,7 +544,7 @@ async function selectUpstreamEmbedding(env) {
   return selected;
 }
 
-// --- Get Knowledge Retrieval (v2 - unchanged) ---
+// --- Get Knowledge Retrieval (v2 - 不变) ---
 async function getKnowledgeRetrieval(env, query, knowledgeText, config) {
   const { baseUrl, apiKey, modelId } = config;
   if (!baseUrl || !apiKey || !modelId) {
@@ -520,8 +557,8 @@ async function getKnowledgeRetrieval(env, query, knowledgeText, config) {
   const systemPrompt = (await env.USER_KEYS_KV.get(PROMPT_KEY)) || DEFAULT_PROMPT;
   const messages = [
     { role: 'system', content: systemPrompt },
-    { 
-      role: 'user', 
+    {
+      role: 'user',
       content: `CONTEXT:\n${knowledgeText}\n\nQUERY:\n${query}`
     }
   ];
@@ -546,11 +583,11 @@ async function getKnowledgeRetrieval(env, query, knowledgeText, config) {
     return data.choices[0].message.content || '';
   } catch (err) {
     console.error(err);
-    return ''; 
+    return '';
   }
 }
 
-// --- Helper Functions (v2 - unchanged) ---
+// --- Helper Functions (v2 - 不变) ---
 function jsonResponse(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
     status,
@@ -574,15 +611,15 @@ function secondsUntilMidnight() {
   const seconds = Math.ceil((tomorrow.getTime() - now.getTime()) / 1000) + 5;
   return seconds;
 }
-// Admin login control page
-// --- Admin Login Page (v2 - unchanged) ---
+// 管理员登陆控制页面
+// --- Admin Login Page (v2 - 不变) ---
 function serveAdminLogin() {
   const html = `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Admin Login</title>
+  <title>管理员登录</title>
   <style>
     body{font-family:system-ui,-apple-system,Segoe UI,Roboto;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f7f7fb}
     .box{background:#fff;padding:32px;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,0.08);width:360px}
@@ -594,11 +631,11 @@ function serveAdminLogin() {
 </head>
 <body>
   <div class="box">
-    <h2>🔐 Admin Login</h2>
+    <h2>🔐 管理员登录</h2>
     <form id="loginForm" method="POST" action="/admin">
-      <input type="text" id="username" name="username" placeholder="Username" required autocomplete="username" />
-      <input type="password" id="password" name="password" placeholder="Password" required autocomplete="current-password" />
-      <button type="submit">Login</button>
+      <input type="text" id="username" name="username" placeholder="用户名" required autocomplete="username" />
+      <input type="password" id="password" name="password" placeholder="密码" required autocomplete="current-password" />
+      <button type="submit">登录</button>
     </form>
   </div>
   </body>
@@ -607,7 +644,7 @@ function serveAdminLogin() {
 }
 
 // --- MODIFIED: Admin Panel (v3.1) ---
-// (HTML and JS updated for v3)
+// (HTML 和 JS 已更新以适应 v3)
 async function handleAdmin(request, env) {
   const url = new URL(request.url);
   let username = '';
@@ -622,7 +659,7 @@ async function handleAdmin(request, env) {
       return new Response('Invalid login request', { status: 400, headers: { 'content-type': 'text/html; charset=utf-8' } });
     }
   } else if (request.method === 'GET') {
-     return new Response(null, { status: 302, headers: { 'Location': '/admin/login' } });
+    return new Response(null, { status: 302, headers: { 'Location': '/admin/login' } });
   } else {
     return new Response('Method not allowed', { status: 405 });
   }
@@ -631,30 +668,30 @@ async function handleAdmin(request, env) {
   const adminPassword = env.ADMIN_PASSWORD;
 
   if (!adminPassword) {
-    return new Response('Error: ADMIN_PASSWORD environment variable not set.', {
+    return new Response('错误：未设置 ADMIN_PASSWORD 环境变量。', {
       status: 500,
       headers: { 'content-type': 'text/html; charset=utf-8' }
     });
   }
 
   if (username !== adminUsername || password !== adminPassword) {
-    const errorHtml = `<!doctype html><html><head><meta charset="utf-8"/><title>Authentication Failed</title>
+    const errorHtml = `<!doctype html><html><head><meta charset="utf-8"/><title>认证失败</title>
       <style>body{font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f7f7fb}
       .box{background:#fff;padding:32px;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,0.08);text-align:center;max-width:400px}
       h2{color:#dc2626;margin-bottom:16px}p{color:#666;margin-bottom:20px}
       a{display:inline-block;padding:10px 20px;background:#2563eb;color:#fff;text-decoration:none;border-radius:8px}
-      </style></head><body><div class="box"><h2>❌ Authentication Failed</h2><p>Incorrect username or password</p>
-      <a href="/admin/login">Back to login</a></div></body></html>`;
+      </style></head><body><div class="box"><h2>❌ 认证失败</h2><p>用户名或密码错误</p>
+      <a href="/admin/login">返回登录</a></div></body></html>`;
     return new Response(errorHtml, { status: 401, headers: { 'content-type': 'text/html; charset=utf-8' } });
   }
 
-  // Admin Panel HTML (v3.1 - header updated)
+  // Admin Panel HTML (v3.1 - 更新了表头)
   const html = `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Admin Panel</title>
+  <title>管理面板</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto; background: #f5f5f7; padding: 20px; }
@@ -695,75 +732,99 @@ async function handleAdmin(request, env) {
 </head>
 <body>
   <div class="container">
-    <h1>🛠️ Admin Panel</h1>
+    <h1>🛠️ 管理面板</h1>
     
     <div class="stats">
       <div class="stat-card">
-        <h3>Total Users</h3>
+        <h3>总用户数</h3>
         <div class="value" id="totalUsers">-</div>
       </div>
       <div class="stat-card">
-        <h3>Total Calls This Month</h3>
+        <h3>本月总调用</h3>
         <div class="value" id="totalCalls">-</div>
       </div>
       <div class="stat-card">
-        <h3>Remaining Quota This Month</h3>
+        <h3>本月剩余配额</h3>
         <div class="value" id="remainingQuota">-</div>
       </div>
       <div class="stat-card">
-        <h3>Quota Usage Rate</h3>
+        <h3>配额使用率</h3>
         <div class="value" id="usageRate">-</div>
       </div>
       <div class="stat-card">
-        <h3>API1 Calls Today</h3>
+        <h3>API1 今日调用</h3>
         <div class="value" id="api1DailyCount">-</div>
       </div>
       <div class="stat-card">
-        <h3>API1 Remaining Today</h3>
+        <h3>API1 今日剩余</h3>
         <div class="value" id="api1Remaining">-</div>
       </div>
     </div>
 
-    <button class="refresh-btn" onclick="loadData()">🔄 Refresh Data</button>
-    <button class="refresh-btn" onclick="testConnection()" style="background:#10b981;margin-left:8px">🔌 Test API Connectivity</button>
+    <button class="refresh-btn" onclick="loadData()">🔄 刷新数据</button>
+    <button class="refresh-btn" onclick="testConnection()" style="background:#10b981;margin-left:8px">🔌 测试 API 连通性</button>
 
-    <h1 style="margin-top:40px">User Management</h1>
+    <h1 style="margin-top:40px">用户管理</h1>
     <div class="table-container">
       <table>
         <thead>
           <tr>
-            <th>Username (Email)</th>
-            <th>Registered At</th>
-            <th>Registration IP</th>
-            <th>Activation Method</th>
-            <th>Used This Month</th>
-            <th>Remaining This Month</th>
-            <th>Status</th>
-            <th>Actions</th>
+            <th>用户名 (邮箱)</th>
+            <th>注册时间</th>
+            <th>注册 IP</th>
+            <th>激活方式</th>
+            <th>本月已用</th>
+            <th>本月剩余</th>
+            <th>状态</th>
+            <th>操作</th>
           </tr>
         </thead>
         <tbody id="userTable">
-          <tr><td colspan="8" class="loading">Loading...</td></tr>
+          <tr><td colspan="8" class="loading">加载中...</td></tr>
         </tbody>
       </table>
     </div>
 
-    <h1>Knowledge Management</h1>
-    <button class="refresh-btn" onclick="addKnowledge()" style="background:#10b981">➕ Add Knowledge</button>
-    <button class="refresh-btn" onclick="editRetrievalPrompt()" style="background:#3b82f6; margin-left: 8px;">✏️ Edit Retrieval Prompt</button>
-    <button class="refresh-btn" onclick="loadKnowledge()" style="margin-left: 8px;">🔄 Refresh Knowledge</button>
+    <h1 style="margin-top:40px">高级功能</h1>
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>功能</th>
+            <th>状态</th>
+            <th>说明</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>负载均衡</strong></td>
+            <td><span id="loadBalancingStatus" class="badge">加载中...</span></td>
+            <td>开启后自动在 API1 和 API2 间切换；关闭后根据客户端请求的模型名称选择对应 API</td>
+            <td>
+              <button class="action-btn btn-unban" id="toggleLoadBalancing" onclick="toggleLoadBalancing()">切换</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h1>知识库管理</h1>
+    <button class="refresh-btn" onclick="addKnowledge()" style="background:#10b981">➕ 添加知识</button>
+    <button class="refresh-btn" onclick="editRetrievalPrompt()" style="background:#3b82f6; margin-left: 8px;">✏️ 修改检索提示词</button>
+    <button class="refresh-btn" onclick="loadKnowledge()" style="margin-left: 8px;">🔄 刷新知识库</button>
     <div class="table-container">
       <table>
         <thead>
           <tr>
             <th>ID</th>
-            <th>Name</th>
-            <th>Content (Preview)</th>
-            <th>Actions</th>
+            <th>名称</th>
+            <th>内容 (预览)</th>
+            <th>操作</th>
           </tr>
         </thead>
         <tbody id="knowledgeTable">
-          <tr><td colspan="4" class="loading">Loading...</td></tr>
+          <tr><td colspan="4" class="loading">加载中...</td></tr>
         </tbody>
       </table>
     </div>
@@ -774,24 +835,24 @@ async function handleAdmin(request, env) {
       <h3 id="modalTitle"></h3>
       <div id="modalContent"></div>
       <div class="modal-buttons">
-        <button class="btn-cancel" onclick="closeModal()">Cancel</button>
-        <button class="btn-confirm" id="modalConfirm">Confirm</button>
+        <button class="btn-cancel" onclick="closeModal()">取消</button>
+        <button class="btn-confirm" id="modalConfirm">确认</button>
       </div>
     </div>
   </div>
 
   <script>
-    // credentials injected by server (v2 unchanged)
+    // 凭证由服务器注入 (v2 不变)
     const username = ${JSON.stringify(username)};
     const password = ${JSON.stringify(password)};
     
-    // JS (v3.1 - loadData rendering updated)
+    // JS (v3.1 - loadData 渲染逻辑已更新)
     async function loadData() {
       try {
         const res = await fetch('/admin/api/users?username=' + encodeURIComponent(username) + '&password=' + encodeURIComponent(password));
         if (!res.ok) {
           if (res.status === 401) window.location.href = '/admin/login'; 
-          document.getElementById('userTable').innerHTML = '<tr><td colspan="8" class="loading" style="color:red">Load failed: ' + res.status + '</td></tr>';
+          document.getElementById('userTable').innerHTML = '<tr><td colspan="8" class="loading" style="color:red">加载失败: ' + res.status + '</td></tr>';
           return;
         }
         
@@ -806,34 +867,34 @@ async function handleAdmin(request, env) {
         
         const tbody = document.getElementById('userTable');
         if (data.users.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="8" class="loading">No users</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="8" class="loading">暂无用户</td></tr>';
           return;
         }
         
-        // v3.1 rendering
+        // v3.1 渲染逻辑
         tbody.innerHTML = data.users.map(u => {
           let statusClass, statusText;
           if (u.status === 'banned') {
             statusClass = 'banned';
-            statusText = 'Banned';
+            statusText = '已封禁';
           } else if (u.remaining > 100) {
             statusClass = 'active';
-            statusText = 'Active';
+            statusText = '正常';
           } else if (u.remaining > 0) {
             statusClass = 'warning';
-            statusText = 'Active';
+            statusText = '正常';
           } else {
             statusClass = 'danger';
-            statusText = 'Depleted';
+            statusText = '已耗尽';
           }
           
           const isBanned = u.status === 'banned';
           const actions = isBanned 
-            ? '<button class="action-btn btn-unban" onclick="unbanUser(\\''+u.username+'\\')">Unban</button>' // u.username is email
-            : '<button class="action-btn btn-ban" onclick="banUser(\\''+u.username+'\\')">Ban</button>';
+            ? '<button class="action-btn btn-unban" onclick="unbanUser(\\''+u.username+'\\')">解封</button>' // u.username 是邮箱
+            : '<button class="action-btn btn-ban" onclick="banUser(\\''+u.username+'\\')">封禁</button>';
           
-          // u.username is now email
-          // u.activationCode is 'email-verification' or 'legacy-user' or an old activation code
+          // u.username 现在是邮箱
+          // u.activationCode 现在是 'email-verification' 或 'legacy-user' 或旧激活码
           return '<tr>' +
             '<td><strong>'+u.username+'</strong></td>' + 
             '<td>'+u.createdAt+'</td>' +
@@ -843,29 +904,29 @@ async function handleAdmin(request, env) {
             '<td>'+u.remaining+'</td>' +
             '<td><span class="badge '+statusClass+'">'+statusText+'</span></td>' +
             '<td>'+actions+
-            '<button class="action-btn btn-quota" onclick="addQuota(\\''+u.username+'\\')">Add Quota</button>' +
-            '<button class="action-btn btn-delete" onclick="deleteUser(\\''+u.username+'\\')">Delete</button></td>' +
+            '<button class="action-btn btn-quota" onclick="addQuota(\\''+u.username+'\\')">加额度</button>' +
+            '<button class="action-btn btn-delete" onclick="deleteUser(\\''+u.username+'\\')">删除</button></td>' +
           '</tr>';
         }).join('');
       } catch (err) {
-        document.getElementById('userTable').innerHTML = '<tr><td colspan="8" class="loading" style="color:red">Error: ' + err.message + '</td></tr>';
+        document.getElementById('userTable').innerHTML = '<tr><td colspan="8" class="loading" style="color:red">错误: ' + err.message + '</td></tr>';
       }
     }
 
-    // (v2 unchanged)
+    // (v2 - 不变)
     async function loadKnowledge() {
       try {
         const res = await fetch('/admin/api/knowledge?username=' + encodeURIComponent(username) + '&password=' + encodeURIComponent(password));
         if (!res.ok) {
           if (res.status === 401) window.location.href = '/admin/login';
-          document.getElementById('knowledgeTable').innerHTML = '<tr><td colspan="4" class="loading" style="color:red">Load failed: ' + res.status + '</td></tr>';
+          document.getElementById('knowledgeTable').innerHTML = '<tr><td colspan="4" class="loading" style="color:red">加载失败: ' + res.status + '</td></tr>';
           return;
         }
         
         const data = await res.json();
         const tbody = document.getElementById('knowledgeTable');
         if (data.knowledge.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="4" class="loading">No knowledge</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="4" class="loading">暂无知识</td></tr>';
           return;
         }
         
@@ -875,15 +936,15 @@ async function handleAdmin(request, env) {
             '<td>'+k.id+'</td>' +
             '<td>'+ (k.name || '-') +'</td>' +
             '<td>'+preview+'</td>' +
-            '<td><button class="action-btn btn-delete" onclick="deleteKnowledge(\\''+k.id+'\\')">Delete</button></td>' +
+            '<td><button class="action-btn btn-delete" onclick="deleteKnowledge(\\''+k.id+'\\')">删除</button></td>' +
           '</tr>';
         }).join('');
       } catch (err) {
-        document.getElementById('knowledgeTable').innerHTML = '<tr><td colspan="4" class="loading" style="color:red">Error: ' + err.message + '</td></tr>';
+        document.getElementById('knowledgeTable').innerHTML = '<tr><td colspan="4" class="loading" style="color:red">错误: ' + err.message + '</td></tr>';
       }
     }
     
-    // (v2 unchanged)
+    // (v2 - 不变)
     async function performAction(action, target, extraData = {}) {
       try {
         const res = await fetch('/admin/api/action', {
@@ -899,47 +960,47 @@ async function handleAdmin(request, env) {
         });
         const result = await res.json();
         if (res.ok) {
-          alert(result.message || 'Operation successful');
+          alert(result.message || '操作成功');
           if (action.includes('Knowledge') || action.includes('Prompt')) {
              if (action.includes('Knowledge')) loadKnowledge();
           } else {
              loadData();
           }
         } else {
-          alert('Operation failed: ' + (result.error || 'Unknown error'));
+          alert('操作失败: ' + (result.error || '未知错误'));
         }
       } catch (err) {
-        alert('Operation failed: ' + err.message);
+        alert('操作失败: ' + err.message);
       }
     }
     
-    // (v2 unchanged)
+    // (v2 - 不变)
     function banUser(targetUsername) {
-      if (confirm('Are you sure you want to ban user ' + targetUsername + ' ?')) {
+      if (confirm('确定要封禁用户 ' + targetUsername + ' 吗？')) {
         performAction('ban', targetUsername);
       }
     }
     
-    // (v2 unchanged)
+    // (v2 - 不变)
     function unbanUser(targetUsername) {
-      if (confirm('Are you sure you want to unban user ' + targetUsername + ' ?')) {
+      if (confirm('确定要解封用户 ' + targetUsername + ' 吗？')) {
         performAction('unban', targetUsername);
       }
     }
     
-    // (v2 unchanged)
+    // (v2 - 不变)
     function deleteUser(targetUsername) {
-      if (confirm('Are you sure you want to delete user ' + targetUsername + ' ? This action is irreversible!')) {
+      if (confirm('确定要删除用户 ' + targetUsername + ' 吗？此操作不可恢复！')) {
         performAction('delete', targetUsername);
       }
     }
     
-    // (v2 unchanged)
+    // (v2 - 不变)
     function addQuota(targetUsername) {
-      document.getElementById('modalTitle').textContent = 'Increase Quota';
+      document.getElementById('modalTitle').textContent = '增加额度';
       document.getElementById('modalContent').innerHTML = 
-        '<p>Increase monthly quota for user <strong>' + targetUsername + '</strong></p>' +
-        '<input type="number" id="quotaAmount" placeholder="Enter quota amount" min="1" value="100" />';
+        '<p>为用户 <strong>' + targetUsername + '</strong> 增加本月额度</p>' +
+        '<input type="number" id="quotaAmount" placeholder="输入额度数量" min="1" value="100" />';
       document.getElementById('modal').classList.add('show');
       
       document.getElementById('modalConfirm').onclick = function() {
@@ -948,20 +1009,20 @@ async function handleAdmin(request, env) {
           performAction('addQuota', targetUsername, { amount });
           closeModal();
         } else {
-          alert('Please enter a valid quota amount');
+          alert('请输入有效的额度数量');
         }
       };
     }
 
-    // (v2 unchanged)
+    // (v2 - 不变)
     function addKnowledge() {
-      document.getElementById('modalTitle').textContent = 'Add Knowledge';
+      document.getElementById('modalTitle').textContent = '添加知识';
       document.getElementById('modalContent').innerHTML = 
-        '<p>Knowledge name (optional)</p>' +
-        '<input type="text" id="knowledgeName" placeholder="Enter knowledge name" />' +
-        '<p>Upload a file (TXT, MD, JSON, etc.) or input text</p>' +
+        '<p>知识名称（可选）</p>' +
+        '<input type="text" id="knowledgeName" placeholder="输入知识名称" />' +
+        '<p>上传文件（TXT, MD, JSON 等文本文件）或输入文本</p>' +
         '<input type="file" id="knowledgeFile" accept=".txt,.md,.json,.csv" />' +
-        '<textarea id="knowledgeText" placeholder="Or paste knowledge text directly" rows="5"></textarea>';
+        '<textarea id="knowledgeText" placeholder="或直接输入知识文本" rows="5"></textarea>';
       document.getElementById('modal').classList.add('show');
       
       document.getElementById('modalConfirm').onclick = async function() {
@@ -970,7 +1031,7 @@ async function handleAdmin(request, env) {
         const text = document.getElementById('knowledgeText').value.trim();
         
         if (!file && !text) {
-          alert('Please upload a file or input text');
+          alert('请上传文件或输入文本');
           return;
         }
 
@@ -988,28 +1049,28 @@ async function handleAdmin(request, env) {
           });
           const result = await res.json();
           if (res.ok) {
-            alert(result.message || 'Added successfully');
+            alert(result.message || '添加成功');
             loadKnowledge();
             closeModal();
           } else {
-            alert('Add failed: ' + (result.error || 'Unknown error'));
+            alert('添加失败: ' + (result.error || '未知错误'));
           }
         } catch (err) {
-          alert('Add failed: ' + err.message);
+          alert('添加失败: ' + err.message);
         }
       };
     }
 
-    // (v2 unchanged)
+    // (v2 - 不变)
     function editRetrievalPrompt() {
-      document.getElementById('modalTitle').textContent = 'Edit Retrieval Prompt';
-      document.getElementById('modalContent').innerHTML = '<p>Loading current prompt...</p>';
+      document.getElementById('modalTitle').textContent = '修改检索提示词';
+      document.getElementById('modalContent').innerHTML = '<p>正在加载当前提示词...</p>';
       document.getElementById('modalConfirm').disabled = true;
       document.getElementById('modal').classList.add('show');
       loadAndShowPromptEditor();
     }
     
-    // (v2 unchanged)
+    // (v2 - 不变)
     async function loadAndShowPromptEditor() {
       let currentPrompt = '';
       try {
@@ -1024,18 +1085,18 @@ async function handleAdmin(request, env) {
         });
         if (!res.ok) {
           const errData = await res.json();
-          throw new Error(errData.error || 'Failed to load prompt');
+          throw new Error(errData.error || '无法加载提示词');
         }
         const data = await res.json();
         currentPrompt = data.prompt;
       } catch (err) {
-        document.getElementById('modalContent').innerHTML = '<p style="color:red">Load failed: ' + err.message + '</p>';
+        document.getElementById('modalContent').innerHTML = '<p style="color:red">加载失败: ' + err.message + '</p>';
         return;
       }
 
       document.getElementById('modalContent').innerHTML = 
-        '<p>Edit the "retrieval assistant" (Embedding API) system prompt.</p>' +
-        '<p style="font-size:12px; color:#666;">This prompt is used by the getKnowledgeRetrieval function.</p>' +
+        '<p>修改 "检索助手" (Embedding API) 的系统提示词。</p>' +
+        '<p style="font-size:12px; color:#666;">此提示词用于 getKnowledgeRetrieval 函数。</p>' +
         '<textarea id="promptText" rows="10" style="width:100%; font-family: monospace; font-size: 13px; margin-top: 8px;"></textarea>';
       document.getElementById('promptText').value = currentPrompt;
       document.getElementById('modalConfirm').disabled = false;
@@ -1043,42 +1104,42 @@ async function handleAdmin(request, env) {
       document.getElementById('modalConfirm').onclick = async function() {
         const newPrompt = document.getElementById('promptText').value.trim();
         if (!newPrompt) {
-          alert('Prompt cannot be empty');
+          alert('提示词不能为空');
           return;
         }
         document.getElementById('modalConfirm').disabled = true;
-        document.getElementById('modalConfirm').textContent = 'Saving...';
+        document.getElementById('modalConfirm').textContent = '保存中...';
         try {
           await performAction('updateRetrievalPrompt', null, { prompt: newPrompt });
           closeModal();
         } catch (err) {
         } finally {
           document.getElementById('modalConfirm').disabled = false;
-          document.getElementById('modalConfirm').textContent = 'Confirm';
+          document.getElementById('modalConfirm').textContent = '确认';
         }
       };
     }
 
-    // (v2 unchanged)
+    // (v2 - 不变)
     function deleteKnowledge(id) {
-      if (confirm('Are you sure you want to delete knowledge ID ' + id + ' ?')) {
+      if (confirm('确定要删除知识 ID ' + id + ' 吗？')) {
         performAction('deleteKnowledge', id);
       }
     }
     
-    // (v2 unchanged)
+    // (v2 - 不变)
     function closeModal() {
       document.getElementById('modal').classList.remove('show');
     }
     
-    // (v2 unchanged)
+    // (v2 - 不变)
     async function testConnection() {
-      if (!confirm('Are you sure you want to test API connectivity? This will send test requests to both APIs.')) {
+      if (!confirm('确定要测试 API 连通性吗？这将向两个 API 发送测试请求。')) {
         return;
       }
       const btn = event.target;
       btn.disabled = true;
-      btn.textContent = '🔄 Testing...';
+      btn.textContent = '🔄 测试中...';
       try {
         const res = await fetch('/admin/api/test-connection', {
           method: 'POST',
@@ -1087,53 +1148,118 @@ async function handleAdmin(request, env) {
         });
         const result = await res.json();
         if (res.ok) {
-          let message = '=== API Connectivity Test Results ===\\n\\n';
+          let message = '=== API 连通性测试结果 ===\\n\\n';
           if (result.api1) {
             message += 'API1 (' + (result.api1.baseUrl || 'N/A') + '):\\n';
-            message += 'Status: ' + (result.api1.success ? '✅ Success' : '❌ Failure') + '\\n';
-            message += 'Response time: ' + result.api1.responseTime + 'ms\\n';
-            if (result.api1.error) message += 'Error: ' + result.api1.error + '\\n';
+            message += '状态: ' + (result.api1.success ? '✅ 成功' : '❌ 失败') + '\\n';
+            message += '响应时间: ' + result.api1.responseTime + 'ms\\n';
+            if (result.api1.error) message += '错误: ' + result.api1.error + '\\n';
             message += '\\n';
           }
           if (result.api2) {
             message += 'API2 (' + (result.api2.baseUrl || 'N/A') + '):\\n';
-            message += 'Status: ' + (result.api2.success ? '✅ Success' : '❌ Failure') + '\\n';
-            message += 'Response time: ' + result.api2.responseTime + 'ms\\n';
-            if (result.api2.error) message += 'Error: ' + result.api2.error + '\\n';
+            message += '状态: ' + (result.api2.success ? '✅ 成功' : '❌ 失败') + '\\n';
+            message += '响应时间: ' + result.api2.responseTime + 'ms\\n';
+            if (result.api2.error) message += '错误: ' + result.api2.error + '\\n';
           } else {
-            message += 'API2: Not configured\\n';
+            message += 'API2: 未配置\\n';
           }
           if (result.embedding1) {
             message += '\\nEmbedding1 (' + (result.embedding1.baseUrl || 'N/A') + '):\\n';
-            message += 'Status: ' + (result.embedding1.success ? '✅ Success' : '❌ Failure') + '\\n';
-            message += 'Response time: ' + result.embedding1.responseTime + 'ms\\n';
-            message += 'Test endpoint: /v1/chat/completions\\n'
-            if (result.embedding1.error) message += 'Error: ' + result.embedding1.error + '\\n';
+            message += '状态: ' + (result.embedding1.success ? '✅ 成功' : '❌ 失败') + '\\n';
+            message += '响应时间: ' + result.embedding1.responseTime + 'ms\\n';
+            message += '测试端点: /v1/chat/completions\\n'
+            if (result.embedding1.error) message += '错误: ' + result.embedding1.error + '\\n';
             message += '\\n';
           }
           if (result.embedding2) {
             message += 'Embedding2 (' + (result.embedding2.baseUrl || 'N/A') + '):\\n';
-            message += 'Status: ' + (result.embedding2.success ? '✅ Success' : '❌ Failure') + '\\n';
-            message += 'Response time: ' + result.embedding2.responseTime + 'ms\\n';
-            message += 'Test endpoint: /v1/chat/completions\\n'
-            if (result.embedding2.error) message += 'Error: ' + result.embedding2.error + '\\n';
+            message += '状态: ' + (result.embedding2.success ? '✅ 成功' : '❌ 失败') + '\\n';
+            message += '响应时间: ' + result.embedding2.responseTime + 'ms\\n';
+            message += '测试端点: /v1/chat/completions\\n'
+            if (result.embedding2.error) message += '错误: ' + result.embedding2.error + '\\n';
           } else {
-            message += 'Embedding2: Not configured\\n';
+            message += 'Embedding2: 未配置\\n';
           }
           alert(message);
         } else {
-          alert('Test failed: ' + (result.error || 'Unknown error'));
+          alert('测试失败: ' + (result.error || '未知错误'));
         }
       } catch (err) {
-        alert('Test failed: ' + err.message);
+        alert('测试失败: ' + err.message);
       } finally {
         btn.disabled = false;
-        btn.textContent = '🔌 Test API Connectivity';
+        btn.textContent = '🔌 测试 API 连通性';
+      }
+    }
+    
+    // Load balancing toggle functions
+    async function loadLoadBalancingStatus() {
+      try {
+        const res = await fetch('/admin/api/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username,
+            password,
+            action: 'getLoadBalancingStatus'
+          })
+        });
+        
+        if (res.ok) {
+          const data = await res.json();
+          const isEnabled = data.enabled;
+          const statusSpan = document.getElementById('loadBalancingStatus');
+          const toggleBtn = document.getElementById('toggleLoadBalancing');
+          
+          if (isEnabled) {
+            statusSpan.className = 'badge active';
+            statusSpan.textContent = '已开启';
+            toggleBtn.textContent = '关闭';
+            toggleBtn.className = 'action-btn btn-ban';
+          } else {
+            statusSpan.className = 'badge danger';
+            statusSpan.textContent = '已关闭';
+            toggleBtn.textContent = '开启';
+            toggleBtn.className = 'action-btn btn-unban';
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load load balancing status:', err);
+      }
+    }
+    
+    async function toggleLoadBalancing() {
+      if (!confirm('确定要切换负载均衡状态吗？')) {
+        return;
+      }
+      
+      try {
+        const res = await fetch('/admin/api/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username,
+            password,
+            action: 'toggleLoadBalancing'
+          })
+        });
+        
+        const result = await res.json();
+        if (res.ok) {
+          alert(result.message || '操作成功');
+          loadLoadBalancingStatus();
+        } else {
+          alert('操作失败: ' + (result.error || '未知错误'));
+        }
+      } catch (err) {
+        alert('操作失败: ' + err.message);
       }
     }
     
     loadData();
     loadKnowledge();
+    loadLoadBalancingStatus();
   </script>
 </body>
 </html>`;
@@ -1142,7 +1268,7 @@ async function handleAdmin(request, env) {
 }
 
 // --- MODIFIED: Admin API (v3.1) ---
-// (updated to support email as username)
+// (更新以支持邮箱作为用户名)
 async function handleAdminAPI(request, env) {
   const url = new URL(request.url);
   const username = url.searchParams.get('username') || '';
@@ -1155,7 +1281,7 @@ async function handleAdminAPI(request, env) {
 
   try {
     const yyyyMm = new Date().toISOString().slice(0, 7);
-    const QUOTA_PER_USER_PER_MONTH = 999;
+    const QUOTA_PER_USER_PER_MONTH = parseInt(env.QUOTA_PER_USER_PER_MONTH || '999', 10);
 
     const userList = await env.USER_KEYS_KV.list({ prefix: 'userkey:' });
 
@@ -1163,7 +1289,7 @@ async function handleAdminAPI(request, env) {
     let totalCalls = 0;
 
     for (const key of userList.keys) {
-      const emailAsUsername = key.name.replace('userkey:', ''); 
+      const emailAsUsername = key.name.replace('userkey:', '');
       const metaRaw = await env.USER_KEYS_KV.get(key.name);
 
       if (!metaRaw) continue;
@@ -1183,12 +1309,12 @@ async function handleAdminAPI(request, env) {
       totalCalls += used;
 
       const registrationIP = meta.registrationIP || '-';
-      
+
       users.push({
-        username: emailAsUsername, 
-        createdAt: meta.createdAt ? new Date(meta.createdAt).toLocaleString('en-US') : '-',
+        username: emailAsUsername,
+        createdAt: meta.createdAt ? new Date(meta.createdAt).toLocaleString('zh-CN') : '-',
         registrationIP,
-        activationCode: meta.activatedWith || 'legacy-user', // fill with 'email-verification' or old activation code
+        activationCode: meta.activatedWith || 'legacy-user', // 填充 'email-verification' 或旧的激活码
         used,
         remaining,
         status: meta.status || 'active'
@@ -1210,7 +1336,8 @@ async function handleAdminAPI(request, env) {
     const dailyCountKey = `api1_daily_count:${today}`;
     const rawDailyCount = await env.USER_KEYS_KV.get(dailyCountKey);
     const api1DailyCount = rawDailyCount ? parseInt(rawDailyCount, 10) : 0;
-    const api1Remaining = Math.max(0, 2500 - api1DailyCount);
+    const DAILY_LIMIT = parseInt(env.DAILY_LIMIT || '2500', 10);
+    const api1Remaining = Math.max(0, DAILY_LIMIT - api1DailyCount);
 
     return jsonResponse({
       totalUsers,
@@ -1226,7 +1353,7 @@ async function handleAdminAPI(request, env) {
   }
 }
 
-// --- Admin Knowledge API (v2 - unchanged) ---
+// --- Admin Knowledge API (v2 - 不变) ---
 async function handleAdminKnowledgeAPI(request, env) {
   const url = new URL(request.url);
   const username = url.searchParams.get('username') || '';
@@ -1251,7 +1378,7 @@ async function handleAdminKnowledgeAPI(request, env) {
   }
 }
 
-// --- Add Knowledge (v2 - unchanged) ---
+// --- Add Knowledge (v2 - 不变) ---
 async function handleAddKnowledge(request, env) {
   try {
     const formData = await request.formData();
@@ -1282,20 +1409,20 @@ async function handleAddKnowledge(request, env) {
     }
 
     const id = Date.now().toString();
-    
+
     const stmt = env.KNOWLEDGE_D1.prepare(
       'INSERT INTO knowledge (id, name, text) VALUES (?, ?, ?)'
-    ).bind(id, name, text); 
-    
+    ).bind(id, name, text);
+
     await stmt.run();
 
-    return jsonResponse({ message: `Knowledge added, ID: ${id}` });
+    return jsonResponse({ message: `知识已添加，ID: ${id}` });
   } catch (err) {
     return jsonResponse({ error: 'internal_error', detail: String(err) }, 500);
   }
 }
 
-// --- Admin Action (v2 - unchanged) ---
+// --- Admin Action (v2 - 不变) ---
 async function handleAdminAction(request, env) {
   try {
     const body = await request.json().catch(() => null);
@@ -1303,7 +1430,7 @@ async function handleAdminAction(request, env) {
       return jsonResponse({ error: 'invalid request body' }, 400);
     }
 
-    const { username, password, action, target, amount, prompt } = body; 
+    const { username, password, action, target, amount, prompt } = body;
 
     const adminUsername = env.ADMIN_USERNAME || 'Panghu1102';
     if (!env.ADMIN_PASSWORD || username !== adminUsername || password !== env.ADMIN_PASSWORD) {
@@ -1319,7 +1446,7 @@ async function handleAdminAction(request, env) {
         let metaBan = JSON.parse(metaRawBan);
         metaBan.status = 'banned';
         await env.USER_KEYS_KV.put(userKeyBan, JSON.stringify(metaBan));
-        return jsonResponse({ message: `User ${target} has been banned` });
+        return jsonResponse({ message: `用户 ${target} 已被封禁` });
 
       case 'unban':
         if (!target) return jsonResponse({ error: 'missing target' }, 400);
@@ -1329,7 +1456,7 @@ async function handleAdminAction(request, env) {
         let metaUnban = JSON.parse(metaRawUnban);
         metaUnban.status = 'active';
         await env.USER_KEYS_KV.put(userKeyUnban, JSON.stringify(metaUnban));
-        return jsonResponse({ message: `User ${target} has been unbanned` });
+        return jsonResponse({ message: `用户 ${target} 已解封` });
 
       case 'delete':
         if (!target) return jsonResponse({ error: 'missing target' }, 400);
@@ -1338,7 +1465,7 @@ async function handleAdminAction(request, env) {
         const yyyyMmDel = new Date().toISOString().slice(0, 7);
         const quotaKeyDel = `quota:${target}:${yyyyMmDel}`;
         await env.USER_KEYS_KV.delete(quotaKeyDel);
-        return jsonResponse({ message: `User ${target} has been deleted` });
+        return jsonResponse({ message: `用户 ${target} 已删除` });
 
       case 'addQuota':
         if (!target || !amount || amount <= 0) return jsonResponse({ error: 'invalid target or amount' }, 400);
@@ -1349,13 +1476,13 @@ async function handleAdminAction(request, env) {
         const newUsedAdd = Math.max(0, usedAdd - amount);
         const ttlAdd = secondsUntilMonthEnd();
         await env.USER_KEYS_KV.put(quotaKeyAdd, String(newUsedAdd), { expirationTtl: ttlAdd });
-        return jsonResponse({ message: `Increased ${amount} quota for user ${target}` });
+        return jsonResponse({ message: `已为用户 ${target} 增加 ${amount} 额度` });
 
       case 'deleteKnowledge':
         if (!target) return jsonResponse({ error: 'missing target id' }, 400);
         const stmt = env.KNOWLEDGE_D1.prepare('DELETE FROM knowledge WHERE id = ?').bind(target);
         await stmt.run();
-        return jsonResponse({ message: `Knowledge ID ${target} has been deleted` });
+        return jsonResponse({ message: `知识 ID ${target} 已删除` });
 
       case 'getRetrievalPrompt':
         const PROMPT_KEY = 'config:retrieval_prompt';
@@ -1365,10 +1492,23 @@ async function handleAdminAction(request, env) {
 
       case 'updateRetrievalPrompt':
         if (typeof prompt !== 'string' || !prompt.trim()) {
-           return jsonResponse({ error: 'prompt is missing or empty' }, 400);
+          return jsonResponse({ error: 'prompt is missing or empty' }, 400);
         }
         await env.USER_KEYS_KV.put('config:retrieval_prompt', prompt.trim());
-        return jsonResponse({ message: 'Retrieval prompt updated' });
+        return jsonResponse({ message: '检索提示词已更新' });
+
+      case 'getLoadBalancingStatus':
+        const loadBalancingEnabled = await env.USER_KEYS_KV.get('config:load_balancing_enabled');
+        return jsonResponse({ enabled: loadBalancingEnabled === 'true' });
+
+      case 'toggleLoadBalancing':
+        const currentStatus = await env.USER_KEYS_KV.get('config:load_balancing_enabled');
+        const newStatus = currentStatus === 'true' ? 'false' : 'true';
+        await env.USER_KEYS_KV.put('config:load_balancing_enabled', newStatus);
+        return jsonResponse({ 
+          message: newStatus === 'true' ? '负载均衡已开启' : '负载均衡已关闭',
+          enabled: newStatus === 'true'
+        });
 
       default:
         return jsonResponse({ error: 'unknown action' }, 400);
@@ -1378,7 +1518,7 @@ async function handleAdminAction(request, env) {
   }
 }
 
-// --- Test API Connection (v2 - unchanged) ---
+// --- Test API Connection (v2 - 不变) ---
 async function handleTestConnection(request, env) {
   try {
     const body = await request.json().catch(() => null);
@@ -1435,7 +1575,7 @@ async function handleTestConnection(request, env) {
     } else {
       results.api1 = {
         success: false,
-        error: 'API1 not fully configured (requires UPSTREAM_BASE_URL, REAL_API_KEY, UPSTREAM_MODEL_ID)'
+        error: 'API1 未完整配置（需要 UPSTREAM_BASE_URL, REAL_API_KEY, UPSTREAM_MODEL_ID）'
       };
     }
 
@@ -1478,7 +1618,7 @@ async function handleTestConnection(request, env) {
         };
       }
     } else {
-      results.api2 = null; 
+      results.api2 = null;
     }
 
     if (env.UPSTREAM_EMBEDDING_BASE_URL && env.REAL_EMBEDDING_API_KEY && env.EMBEDDING_MODEL_ID) {
@@ -1521,7 +1661,7 @@ async function handleTestConnection(request, env) {
     } else {
       results.embedding1 = {
         success: false,
-        error: 'Embedding1 not fully configured'
+        error: 'Embedding1 未完整配置'
       };
     }
 
