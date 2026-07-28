@@ -336,9 +336,18 @@ async function handleProxy(request, env) {
   const loadBalancingEnabled = await env.USER_KEYS_KV.get('config:load_balancing_enabled');
   const isLoadBalancingOn = loadBalancingEnabled === 'true';
 
-  let apiConfig;
+  let apiConfig = {
+    baseUrl: env.UPSTREAM_BASE_URL,
+    apiKey: env.REAL_API_KEY,
+    modelId: env.UPSTREAM_MODEL_ID,
+    name: 'API1'
+  };
   let bodyToForward;
   const newHeaders = new Headers(request.headers);
+
+  if (!apiConfig.baseUrl) {
+    return jsonResponse({ error: 'Upstream API base URL is not configured by administrator.' }, 500);
+  }
 
   if (request.method === 'POST') {
     try {
@@ -401,6 +410,7 @@ async function handleProxy(request, env) {
       // 这里用来强制system prompts。主要适用于角色扮演以及需要强制提示词来防止滥用和输出不当内容的场景。
       const systemPrompt = `
 You are an AI assistant. Use the following SKILL information to help answer the user's question.
+${skillContent ? `\nSKILL:\n${skillContent}` : ''}
 `;
 
       messages.unshift({ role: 'system', content: systemPrompt });
