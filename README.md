@@ -1,8 +1,141 @@
 # cfRelay
 
-cfRelay 是一个基于 **Cloudflare Workers** 的轻量级 AI API 中继与管理网关。项目以单文件 Worker 的形式提供两份实现：`CN/worker.js`（中文注释版）和 `EN/worker.js`（英文注释版）。两份文件的业务逻辑一致，部署时任选其一即可。
+cfRelay 是一个基于 **Cloudflare Workers** 的轻量级 AI API 中继与管理网关。项目以单文件 Worker 的形式提供三份实现：`CN/worker.js`（中文注释版）、`EN/worker.js`（英文注释版）和 `Lite/worker.js`（精简 API 中转版）。`CN` 与 `EN` 的业务逻辑一致，`Lite` 仅保留单上游 API 中转、API Key 校验、模型映射和月度配额。
 
-> 当前代码标注版本：`1.0.0`，内部版本：`v3.2.1`。
+> 完整版当前代码标注版本：`1.0.0`，内部版本：`v3.2.1`。Lite 当前代码标注版本：`1.0.0`，内部版本：`1.0.0`。
+
+
+
+## 快速部署教程（先看这里）
+
+本项目不需要构建步骤。你可以选择部署 **Lite 精简版** 或 **CN/EN 完整版**：
+
+- 如果只需要把一个 OpenAI 兼容 API 通过 Cloudflare Worker 中转给用户使用，优先选择 `Lite/worker.js`。
+- 如果需要注册页、管理后台、双上游切换、知识库管理和检索增强，选择 `CN/worker.js` 或 `EN/worker.js`。
+
+### 部署 Lite 精简版
+
+Lite 版本只需要一个 KV Namespace 和一个上游 API，不需要 D1、注册页面、管理后台或邮件验证 Worker。
+
+1. 在 Cloudflare 创建 Worker。
+2. 创建 KV Namespace，并绑定到 Worker，绑定名必须是 `USER_KEYS_KV`。
+3. 部署入口文件选择 `Lite/worker.js`。
+4. 配置环境变量：
+
+| 变量 | 必需 | 说明 | 示例 |
+| --- | --- | --- | --- |
+| `USER_KEYS_KV` | 是 | KV Namespace 绑定 | Cloudflare 绑定名，不是文本变量 |
+| `UPSTREAM_BASE_URL` | 是 | 单个上游 Base URL | `https://api.openai.com` |
+| `REAL_API_KEY` | 是 | 上游真实 API Key，建议用 secret | `sk-...` |
+| `UPSTREAM_MODEL_ID` | 是 | 转发给上游的真实模型 ID | `gpt-4o-mini` |
+| `REQUIRED_MODEL_NAME` | 否 | 客户端必须提交的模型名 | `relay-model` |
+| `QUOTA_PER_USER_PER_MONTH` | 否 | 每个 API Key 每月请求额度，默认 `999` | `999` |
+
+Wrangler 配置示例：
+
+```toml
+name = "cfrelay-lite"
+main = "Lite/worker.js"
+compatibility_date = "2026-07-28"
+
+[[kv_namespaces]]
+binding = "USER_KEYS_KV"
+id = "<your-kv-namespace-id>"
+
+[vars]
+UPSTREAM_BASE_URL = "https://api.openai.com"
+UPSTREAM_MODEL_ID = "gpt-4o-mini"
+REQUIRED_MODEL_NAME = "relay-model"
+QUOTA_PER_USER_PER_MONTH = "999"
+```
+
+敏感变量使用 secret：
+
+```bash
+wrangler secret put REAL_API_KEY
+```
+
+为用户创建可用 API Key：
+
+```bash
+wrangler kv key put --binding USER_KEYS_KV "userkey:user@example.com" '{"status":"active","createdAt":"2026-07-28T00:00:00.000Z"}'
+```
+
+客户端调用示例：
+
+```bash
+curl https://<your-lite-worker-domain>/v1/chat/completions \
+  -H "Authorization: Bearer user@example.com" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "relay-model",
+    "messages": [
+      {"role": "user", "content": "你好，请介绍一下 cfRelay Lite。"}
+    ]
+  }'
+```
+
+Lite 会校验 `Authorization`、检查 `userkey:<email>`、累计 `quota:<email>:<yyyy-mm>`，并把请求体中的 `model` 替换为 `UPSTREAM_MODEL_ID` 后转发到 `<UPSTREAM_BASE_URL>/v1/chat/completions`。
+
+### 部署 CN/EN 完整版
+
+1. 在 Cloudflare 创建 Worker。
+2. 创建 KV Namespace，绑定名必须是 `USER_KEYS_KV`。
+3. 创建 D1 数据库，绑定名必须是 `KNOWLEDGE_D1`。
+4. 在 D1 中初始化知识库表：
+
+```sql
+CREATE TABLE IF NOT EXISTS knowledge (
+  id TEXT PRIMARY KEY,
+  name TEXT,
+  text TEXT NOT NULL
+);
+```
+
+5. 部署入口文件选择 `CN/worker.js` 或 `EN/worker.js`。
+6. 配置完整变量和 secrets。最小必需项如下：
+
+| 变量 | 说明 | 示例 |
+| --- | --- | --- |
+| `ADMIN_PASSWORD` | 管理员密码，建议用 secret | `change-me` |
+| `UPSTREAM_BASE_URL` | API1 上游 Base URL | `https://api.openai.com` |
+| `REAL_API_KEY` | API1 真实 API Key，建议用 secret | `sk-...` |
+| `UPSTREAM_MODEL_ID` | API1 真实模型 ID | `gpt-4o-mini` |
+
+Wrangler 配置示例：
+
+```toml
+name = "cfrelay"
+main = "EN/worker.js"
+compatibility_date = "2026-07-28"
+
+[[kv_namespaces]]
+binding = "USER_KEYS_KV"
+id = "<your-kv-namespace-id>"
+
+[[d1_databases]]
+binding = "KNOWLEDGE_D1"
+database_name = "cfrelay-knowledge"
+database_id = "<your-d1-database-id>"
+
+[vars]
+ADMIN_USERNAME = "admin"
+UPSTREAM_BASE_URL = "https://api.openai.com"
+UPSTREAM_MODEL_ID = "gpt-4o-mini"
+REQUIRED_MODEL_NAME = "relay-model"
+QUOTA_PER_USER_PER_MONTH = "999"
+LIMIT_PER_IP_PER_MONTH = "5"
+DAILY_LIMIT = "2500"
+```
+
+敏感变量使用 secret：
+
+```bash
+wrangler secret put ADMIN_PASSWORD
+wrangler secret put REAL_API_KEY
+```
+
+如使用 API2、知识库检索上游或邮件验证 Worker，请继续阅读下方的完整配置说明。
 
 ## 项目能做什么
 
@@ -29,11 +162,31 @@ cfRelay/
 │   └── worker.js      # 中文注释版 Worker
 ├── EN/
 │   └── worker.js      # 英文注释版 Worker
+├── Lite/
+│   └── worker.js      # 精简 API 中转版 Worker
 ├── LICENSE            # Apache-2.0 License
 └── README.md          # 项目说明文档
 ```
 
-## 运行逻辑总览
+
+
+## Lite 精简版说明
+
+`Lite/worker.js` 是 `EN/worker.js` 的精简版，面向只需要 API 中转的场景。它没有任何 Web 页面、注册流程、管理后台、第二上游、负载均衡或 D1 知识库逻辑。
+
+Lite 保留的核心流程：
+
+1. 处理 `OPTIONS` CORS 预检请求。
+2. 校验 `Authorization: Bearer <用户邮箱>`。
+3. 从 KV 读取 `userkey:<用户邮箱>`，并拒绝不存在或 `status` 为 `banned` 的用户。
+4. 使用 `quota:<用户邮箱>:<yyyy-mm>` 记录月度用量，并按 `QUOTA_PER_USER_PER_MONTH` 限制请求数。
+5. 对 `POST` JSON 请求校验客户端模型名必须等于 `REQUIRED_MODEL_NAME`（默认 `example-model`）。
+6. 将请求体中的 `model` 替换为 `UPSTREAM_MODEL_ID`。
+7. 仅转发到 `UPSTREAM_BASE_URL` 这一套上游，并使用 `REAL_API_KEY` 作为上游 Bearer Token。
+
+Lite 使用 Cloudflare Workers 标准模块入口和 Web API，不依赖 Node.js 专属模块；唯一 Cloudflare 绑定是 `USER_KEYS_KV`。
+
+## 完整版运行逻辑总览
 
 ### 1. 路由分发
 
@@ -127,9 +280,9 @@ Worker 的入口是 `export default { async fetch(request, env) { ... } }`。入
 1. 非 POST 代理请求此前没有初始化上游配置，会在构造上游 URL 时访问未定义变量；现在默认使用 API1 上游配置。
 2. 知识库检索结果此前计算后没有注入 system prompt；现在会在有检索结果时追加到 `SKILL` 区块。
 
-## 部署准备
+## 完整版部署准备
 
-你需要准备：
+如果部署 CN/EN 完整版，你需要准备：
 
 1. 一个 Cloudflare 账号。
 2. 一个 Workers 服务。
@@ -140,7 +293,7 @@ Worker 的入口是 `export default { async fetch(request, env) { ... } }`。入
 7. 可选：知识库检索/Embedding 上游 API。
 8. 可选：配套邮件验证 Worker，用于完成注册激活。
 
-## D1 初始化
+## 完整版 D1 初始化
 
 在 D1 中创建知识库表：
 
@@ -200,7 +353,7 @@ CREATE TABLE IF NOT EXISTS knowledge (
 | `REAL_EMBEDDING_API_KEY_2` | 检索上游 2 API Key |
 | `EMBEDDING_MODEL_ID_2` | 检索上游 2 模型 ID；未设置时回退 `EMBEDDING_MODEL_ID` |
 
-## wrangler 配置示例
+## 完整版 wrangler 配置示例
 
 项目当前没有内置 `wrangler.toml`。你可以按需创建，例如部署英文版：
 
@@ -288,7 +441,7 @@ userkey:<email>
 | `config:load_balancing_enabled` | `true` 或 `false` | 是否启用负载均衡 |
 | `config:retrieval_prompt` | 文本 | 自定义检索提示词 |
 
-## 调用示例
+## 完整版调用示例
 
 客户端请求时使用用户邮箱作为 Bearer Token，模型名使用管理员暴露的 `REQUIRED_MODEL_NAME`：
 
